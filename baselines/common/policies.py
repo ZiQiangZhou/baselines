@@ -15,7 +15,7 @@ class PolicyWithValue(object):
     Encapsulates fields and methods for RL policy and value function estimation with shared parameters
     """
 
-    def __init__(self, env, observations, latent, estimate_q=False, vf_latent=None, sess=None, **tensors):
+    def __init__(self, env, observations, latent, estimate_q=False, vf_latent=None, sess=None, graph=None, **tensors):
         """
         Parameters:
         ----------
@@ -28,6 +28,8 @@ class PolicyWithValue(object):
         vf_latent       latent state from which value function should be inferred (if None, then latent is used)
 
         sess            tensorflow session to run calculations in (if None, default session is used)
+
+        graph           tensorflow graph of the session (if None, use the default graph)
 
         **tensors       tensorflow tensors for additional attributes such as state or mask
 
@@ -54,6 +56,7 @@ class PolicyWithValue(object):
         # Calculate the neg log of our probability
         self.neglogp = self.pd.neglogp(self.action)
         self.sess = sess
+        self.graph = graph
 
         if estimate_q:
             assert isinstance(env.action_space, gym.spaces.Discrete)
@@ -65,14 +68,15 @@ class PolicyWithValue(object):
 
     def _evaluate(self, variables, observation, **extra_feed):
         sess = self.sess or tf.get_default_session()
+        graph = self.graph or tf.get_default_graph()
         feed_dict = {self.X: adjust_shape(self.X, observation)}
         for inpt_name, data in extra_feed.items():
             if inpt_name in self.__dict__.keys():
                 inpt = self.__dict__[inpt_name]
                 if isinstance(inpt, tf.Tensor) and inpt._op.type == 'Placeholder':
                     feed_dict[inpt] = adjust_shape(inpt, data)
-
-        return sess.run(variables, feed_dict)
+        with graph.as_default():
+            return sess.run(variables, feed_dict)
 
     def step(self, observation, **extra_feed):
         """
@@ -180,4 +184,3 @@ def _normalize_clip_observation(x, clip_range=[-5.0, 5.0]):
     rms = RunningMeanStd(shape=x.shape[1:])
     norm_x = tf.clip_by_value((x - rms.mean) / rms.std, min(clip_range), max(clip_range))
     return norm_x, rms
-

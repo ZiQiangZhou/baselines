@@ -56,6 +56,12 @@ def get_session(config=None):
         sess = make_session(config=config, make_default=True)
     return sess
 
+def get_graph_and_session(config):
+    """Create a graph and a session with a given config"""
+    graph = tf.Graph()
+    sess = make_session(config=config, make_default=False, graph=graph)
+    return graph, sess
+
 def make_session(config=None, num_cpu=None, make_default=False, graph=None):
     """Returns a session that will use <num_cpu> CPU's only"""
     if num_cpu is None:
@@ -85,10 +91,12 @@ def in_session(f):
 
 ALREADY_INITIALIZED = set()
 
-def initialize():
+def initialize(sess=None):
     """Initialize all the uninitialized variables in the global scope."""
     new_variables = set(tf.global_variables()) - ALREADY_INITIALIZED
-    get_session().run(tf.variables_initializer(new_variables))
+    if sess is None:
+        sess = get_session()
+    sess.run(tf.variables_initializer(new_variables))
     ALREADY_INITIALIZED.update(new_variables)
 
 # ================================================================
@@ -311,52 +319,66 @@ def get_available_gpus():
 # Saving variables
 # ================================================================
 
-def load_state(fname, sess=None):
+def load_state(fname, sess=None, graph=None):
     from baselines import logger
     logger.warn('load_state method is deprecated, please use load_variables instead')
-    sess = sess or get_session()
-    saver = tf.train.Saver()
-    saver.restore(tf.get_default_session(), fname)
+    if graph is None:
+        sess = sess or get_session()
+        graph = tf.get_default_graph()
+    with graph.as_default():
+        saver = tf.train.Saver()
+        saver.restore(sess, fname)
 
-def save_state(fname, sess=None):
+
+def save_state(fname, sess=None, graph=None):
     from baselines import logger
     logger.warn('save_state method is deprecated, please use save_variables instead')
-    sess = sess or get_session()
+    if graph is None:
+        sess = sess or get_session()
+        graph = tf.get_default_graph()
     dirname = os.path.dirname(fname)
     if any(dirname):
         os.makedirs(dirname, exist_ok=True)
-    saver = tf.train.Saver()
-    saver.save(tf.get_default_session(), fname)
+    with graph.as_default():
+        saver = tf.train.Saver()
+        saver.save(sess, fname)
 
 # The methods above and below are clearly doing the same thing, and in a rather similar way
 # TODO: ensure there is no subtle differences and remove one
 
-def save_variables(save_path, variables=None, sess=None):
-    sess = sess or get_session()
-    variables = variables or tf.trainable_variables()
+def save_variables(save_path, variables=None, sess=None, graph=None):
+    if graph is None:
+        sess = sess or get_session()
+        graph = tf.get_default_graph()
 
-    ps = sess.run(variables)
+    with graph.as_default():
+        variables = variables or tf.trainable_variables()
+
+        ps = sess.run(variables)
     save_dict = {v.name: value for v, value in zip(variables, ps)}
     dirname = os.path.dirname(save_path)
     if any(dirname):
         os.makedirs(dirname, exist_ok=True)
     joblib.dump(save_dict, save_path)
 
-def load_variables(load_path, variables=None, sess=None):
-    sess = sess or get_session()
-    variables = variables or tf.trainable_variables()
+def load_variables(load_path, variables=None, sess=None, graph=None):
+    if graph is None:
+        sess = sess or get_session()
+        graph = tf.get_default_graph()
+    with graph.as_default():
+        variables = variables or tf.trainable_variables()
 
-    loaded_params = joblib.load(os.path.expanduser(load_path))
-    restores = []
-    if isinstance(loaded_params, list):
-        assert len(loaded_params) == len(variables), 'number of variables loaded mismatches len(variables)'
-        for d, v in zip(loaded_params, variables):
-            restores.append(v.assign(d))
-    else:
-        for v in variables:
-            restores.append(v.assign(loaded_params[v.name]))
+        loaded_params = joblib.load(os.path.expanduser(load_path))
+        restores = []
+        if isinstance(loaded_params, list):
+            assert len(loaded_params) == len(variables), 'number of variables loaded mismatches len(variables)'
+            for d, v in zip(loaded_params, variables):
+                restores.append(v.assign(d))
+        else:
+            for v in variables:
+                restores.append(v.assign(loaded_params[v.name]))
 
-    sess.run(restores)
+        sess.run(restores)
 
 # ================================================================
 # Shape adjustment for feeding into tf placeholders
